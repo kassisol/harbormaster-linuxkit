@@ -1,0 +1,84 @@
+kernel:
+  image: linuxkit/kernel:4.14.32
+  cmdline: "console=tty0 console=ttyS0 console=ttyAMA0"
+init:
+  - linuxkit/init:v0.3
+  - linuxkit/runc:v0.3
+  - linuxkit/containerd:v0.3
+  - linuxkit/ca-certificates:v0.3
+onboot:
+  - name: sysctl
+    image: linuxkit/sysctl:v0.3
+  - name: sysfs
+    image: linuxkit/sysfs:v0.3
+  - name: format
+    image: linuxkit/format:v0.3
+  - name: mount
+    image: linuxkit/mount:v0.3
+    binds:
+      - /dev:/dev
+      - /srv:/srv:rshared,rbind
+      - /:/hostroot
+    capabilities:
+      - CAP_SYS_ADMIN
+    rootfsPropagation: shared
+    net: new
+    ipc: new
+    command: ["/usr/bin/mountie", "-device", "/dev/sda1", "/srv"]
+  - name: prepare-srv
+    image: alpine:3.7
+    binds:
+      - /srv:/host_srv
+    command: ["sh", "-c", "mkdir -p /host_srv/var/lib/docker /host_srv/var/run/docker/plugins /host_srv/etc/docker/tls /host_srv/etc/docker/plugins /host_srv/var/lib/hbm"]
+services:
+  - name: getty
+    image: linuxkit/getty:v0.3
+    env:
+     - INSECURE=true
+  - name: rngd
+    image: linuxkit/rngd:v0.3
+  - name: dhcpcd
+    image: linuxkit/dhcpcd:v0.3
+  - name: ntpd
+    image: linuxkit/openntpd:v0.3
+  - name: hbm
+    image: kassisol/hbm:0.10.0
+    binds:
+      - /srv/var/run/docker:/run/docker
+      - /srv/etc/docker/plugins:/etc/docker/plugins
+      - /srv/var/lib/hbm:/var/lib/hbm
+  - name: docker
+    image: docker:18.03.0-ce-dind
+    capabilities:
+      - all
+    net: host
+    mounts:
+      - type: cgroup
+        options: ["rw","nosuid","noexec","nodev","relatime"]
+    binds:
+      - /etc/resolv.conf:/etc/resolv.conf
+      - /lib/modules:/lib/modules
+      - /etc/docker/daemon.json:/etc/docker/daemon.json
+      - /srv/var/lib/docker:/var/lib/docker
+      - /srv/var/run/docker:/run/docker
+      - /srv/etc/docker/tls:/etc/docker/tls
+      - /srv/etc/docker/plugins:/etc/docker/plugins
+    command: ["/usr/local/bin/docker-init", "/usr/local/bin/dockerd"]
+  - name: sshd
+    image: linuxkit/sshd:v0.3
+files:
+  - path: etc/profile.d/containerd.sh
+    contents: "CONTAINERD_NAMESPACE=services.linuxkit"
+    mode: "0500"
+  - path: srv
+    directory: true
+  - path: etc/docker/daemon.json
+    contents: '{"debug": true, "hosts": ["unix:///var/run/docker.sock", "tcp://0.0.0.0:2375"], "authorization-plugins": ["hbm"]}'
+  - path: root/.ssh/authorized_keys
+    source: ~/.ssh/id_rsa.pub
+    mode: "0600"
+    optional: true
+trust:
+  org:
+    - linuxkit
+    - library
